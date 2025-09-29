@@ -1,6 +1,6 @@
 # GSMM Builder (Prodigal + CarveMe)
 
-本项目提供了一个 Python 脚本，用于 **批量将氨基酸序列文件 (.aa/.faa) 或基因组文件 (.fa/.fna) 构建为基因组规模代谢模型 (GSMM, SBML .xml 格式)**。  
+本项目提供了一个 Python 脚本，用于 **批量将氨基酸序列文件 (.aa/.faa) 或基因组文件 (.fa/.fna/fasta) 构建为基因组规模代谢模型 (GSMM, SBML .xml 格式)**。  
 支持直接输入氨基酸文件，或先用 **Prodigal** 从基因组预测基因再构建。
 
 ---
@@ -8,7 +8,7 @@
 ## 📌 功能特性
 
 - 批量处理 `.aa` / `.faa` → `.xml`  
-- 可选从基因组 `.fa` / `.fna` 先调用 **Prodigal** 生成 `.aa` 文件  
+- 可选从基因组 `.fa` / `.fna` / `.fasta`先调用 **Prodigal** 生成 `.aa` 文件  
 - 支持并行计算（默认 4 线程，可配置）  
 - 支持覆盖/跳过已有模型  
 - 可透传参数给 **CarveMe**（如 `--fbc2`、`--universal-model` 等）  
