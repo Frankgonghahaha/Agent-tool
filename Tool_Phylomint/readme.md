@@ -30,8 +30,6 @@
 ---
 
 ## ⚙️ 依赖环境
-
-- Python >= 3.8  
 - 必须安装的库：
   ```bash
   pip install pandas xlsxwriter
@@ -42,12 +40,15 @@
 
 ## 🚀 使用方法
 
-### 场景 1：完整流程（Step1–5）
+### 场景 1：完整流程（Step1–5）：从计算互补指数到筛选功能微生物的互补微生物
 ```bash
 python run_phylomint.py   --phylo /work/.../PhyloMint/PhyloMInt   --models /work/.../代谢模型   --output /work/.../PhyloMInt_output.csv   --function-species-csv /work/.../species_list.csv
 ```
-
-### 场景 2：已有处理好的 CSV，直接进入 Step5
+### 场景 2: 只想计算互补指数
+```bash
+python run_phylomint.py   --phylo /work/.../PhyloMint/PhyloMInt   --models /work/.../代谢模型   --output /work/.../PhyloMInt_output.csv
+```
+### 场景 3：已有PhyloMInt CSV，想查询功能微生物的互补微生物
 ```bash
 python run_phylomint.py   --output /work/.../processed_Phylomint.csv   --function-species-csv /work/.../species_list.csv   --skip-preprocess
 ```
