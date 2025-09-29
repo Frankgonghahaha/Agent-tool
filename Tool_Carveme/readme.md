@@ -15,19 +15,36 @@
 - **参数透传**：可将 CarveMe 的参数（如 `--fbc2`, `--init M9`）透传  
 
 ---
-使用说明：
+
+## 使用说明：
 1）输入.aa格式文件
-conda activate metabolic-modeling
+
 python build_gsmm_from_aa.py \
   --input_path /path/to/aa_folder \
   --output_path /path/to/models_out \
-  --threads 6 \
   --carve_extra --fbc2 --init M9
+  
 2）输入.fasta/fa/fna全基因组文件
+
 python build_gsmm_from_aa.py \
   --genomes_path /path/to/genomes \
   --input_path  /path/to/aa_folder \
   --output_path /path/to/models_out \
-  --threads 6 \
-  --prodigal_mode meta \
   --carve_extra --fbc2 --init M9
+  
+---
+## 参数说明
+--input_path
+必选，包含 .aa/.faa 文件的目录
+--output_path
+必选，输出 .xml 模型的目录
+--genomes_path
+可选，包含 .fa/.fna 基因组文件的目录（启用时会先跑 Prodigal）
+--threads
+并行线程数（默认 4）
+--overwrite
+若目标 .xml 已存在，是否覆盖
+--carve_extra
+透传给 CarveMe 的额外参数
+--prodigal_mode
+Prodigal 的模式，meta（宏基因组）或 single（单菌基因组），默认 meta
