@@ -45,7 +45,7 @@ def run_prodigal_on_genome(genome_path: Path, aa_out_dir: Path, prodigal_cmd: st
         prodigal_cmd,
         "-i", str(genome_path),
         "-a", str(aa_out),
-        "-p", prodigal_mode
+        "-p", meta
     ]
     subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return aa_out
