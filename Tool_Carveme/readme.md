@@ -1,50 +1,77 @@
-本工具的作用是将下载下来的微生物全基因组格式转换为代谢模型。所经历步骤为先通过prodigal将全基因组.fa文件编译出可转录的氨基酸文件.aa格式。之后通过Carveme将.aa构建为基因组规模代谢模型.xml格式。
-本工具提供两种工作模式分别对应于输入.aa格式文件和.fasta/fa/fna全基因组格式文件。
-# build_gsmm_from_aa.py
-批量化将微生物 **氨基酸序列文件 (.aa/.faa)** 转换为 **基因组规模代谢模型 (GSMM, SBML .xml)** 的 Python 脚本。  
-支持两种模式：
-1. 直接从已有 `.aa/.faa` 文件构建模型  
-2. 从基因组 `.fa/.fna` 文件先运行 Prodigal，再进入 CarveMe 流程
+# GSMM Builder (Prodigal + CarveMe)
+
+本项目提供了一个 Python 脚本，用于 **批量将氨基酸序列文件 (.aa/.faa) 或基因组文件 (.fa/.fna) 构建为基因组规模代谢模型 (GSMM, SBML .xml 格式)**。  
+支持直接输入氨基酸文件，或先用 **Prodigal** 从基因组预测基因再构建。
 
 ---
 
-## 功能
-- **Prodigal**：从基因组 `.fa/.fna` 文件预测编码区并导出蛋白 `.aa`  
-- **CarveMe**：从 `.aa/.faa` 文件构建代谢模型（.xml）  
-- **批处理支持**：可多线程同时处理多个输入文件  
-- **参数透传**：可将 CarveMe 的参数（如 `--fbc2`, `--init M9`）透传  
+## 📌 功能特性
+
+- 批量处理 `.aa` / `.faa` → `.xml`  
+- 可选从基因组 `.fa` / `.fna` 先调用 **Prodigal** 生成 `.aa` 文件  
+- 支持并行计算（默认 4 线程，可配置）  
+- 支持覆盖/跳过已有模型  
+- 可透传参数给 **CarveMe**（如 `--fbc2`、`--universal-model` 等）  
 
 ---
 
-## 使用说明：
-1）输入.aa格式文件
+## ⚙️ 依赖环境
+- 必须安装的外部工具：
+  - [CarveMe](https://github.com/cdanielmachado/carveme) （提供 `carve` 命令）  
+  - [Prodigal](https://github.com/hyattpd/Prodigal) （提供 `prodigal` 命令）
 
-python build_gsmm_from_aa.py \
-  --input_path /path/to/aa_folder \
-  --output_path /path/to/models_out \
-  --carve_extra --fbc2 --init M9
-  
-2）输入.fasta/fa/fna全基因组文件
-
-python build_gsmm_from_aa.py \
-  --genomes_path /path/to/genomes \
-  --input_path  /path/to/aa_folder \
-  --output_path /path/to/models_out \
-  --carve_extra --fbc2 --init M9
-  
 ---
-## 参数说明
---input_path
-必选，包含 .aa/.faa 文件的目录
---output_path
-必选，输出 .xml 模型的目录
---genomes_path
-可选，包含 .fa/.fna 基因组文件的目录（启用时会先跑 Prodigal）
---threads
-并行线程数（默认 4）
---overwrite
-若目标 .xml 已存在，是否覆盖
---carve_extra
-透传给 CarveMe 的额外参数
---prodigal_mode
-Prodigal 的模式，meta（宏基因组）或 single（单菌基因组），默认 meta
+
+## 🚀 使用方法
+
+### 场景 1：已有Prodigal .aa / .faa 文件
+```bash
+python build_gsmm.py   --input_path /path/to/aa_files   --output_path /path/to/output_models   --threads 8   --overwrite   --carve_extra --fbc2 --universal-model bacteria
+```
+
+### 场景 2：输入基因组文件（先跑 Prodigal，再 CarveMe）
+```bash
+python build_gsmm.py   --input_path /path/to/aa_out   --output_path /path/to/output_models   --genomes_path /path/to/genomes   --threads 8   --prodigal_mode meta   --carve_extra --fbc2 --universal-model bacteria
+```
+
+### 常用参数说明
+- `--input_path`：包含 `.aa/.faa` 的目录  
+- `--output_path`：保存 `.xml` 的目录  
+- `--threads`：并行线程数（默认 4）  
+- `--overwrite`：覆盖已有同名 `.xml` 文件  
+- `--carve_cmd`：CarveMe 命令名（默认 `carve`）  
+- `--carve_extra`：透传参数给 CarveMe，例如 `--fbc2`  
+- `--genomes_path`：可选，包含基因组文件的目录（.fa/.fna），会先用 Prodigal 生成 `.aa`  
+- `--prodigal_cmd`：Prodigal 命令名（默认 `prodigal`）  
+- `--prodigal_mode`：Prodigal 模式（`meta` 或 `single`，默认 meta）  
+
+---
+
+## 📂 输入输出示例
+
+### 输入目录
+```
+input_path/
+├── sample1.aa
+├── sample2.faa
+genomes_path/
+├── genome1.fa
+├── genome2.fna
+```
+
+### 输出目录
+```
+output_path/
+├── sample1.xml
+├── sample2.xml
+├── genome1.xml
+├── genome2.xml
+```
+
+---
+
+## ⚠️ 注意事项
+
+- 如果提供了 `--genomes_path`，会将 Prodigal 输出的 `.aa` 写入 `--input_path` 指定的目录  
+- CarveMe 的执行参数可通过 `--carve_extra` 灵活传入  
+- 确保 `carve` 和 `prodigal` 已经正确安装并在 PATH 中可执行  
