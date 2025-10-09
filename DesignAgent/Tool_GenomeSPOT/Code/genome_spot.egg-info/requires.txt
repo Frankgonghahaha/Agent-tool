@@ -1,0 +1,7 @@
+biopython>=1.83
+hmmlearn==0.3.0
+scikit-learn==1.2.2
+bacdive>=0.2
+numpy>=1.23.5
+pandas>=1.5.3
+pytest>=7.4.3

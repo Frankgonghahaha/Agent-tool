@@ -1,0 +1,9 @@
+Metadata-Version: 2.1
+Name: genome-spot
+Version: 1.0.1
+Summary: Predict oxygen, temp, salinity, and pH preferences of bacteria and archaea from a genome
+Home-page: https://github.com/cultivarium/GenomeSPOT
+Author: Tyler Barnum
+Author-email: tyler@cultivarium.org
+License: MIT License
+License-File: LICENSE
