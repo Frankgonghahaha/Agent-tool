@@ -130,14 +130,12 @@ S_microbe
 对成员集合 $M$（规模 $|M|=N$）的最终得分：
 
 $$
-\boxed{
 S_{\text{consort}}
 = \alpha\, \overline{S_{\text{microbe}}}
 + \beta\, \overline{\Delta^+}
 - \gamma\, \overline{\mathrm{Comp}^+}
 + \lambda\, \overline{\mathrm{kcat}}
 - \mu\, N
-}
 $$
 
 - $\overline{S_{\text{microbe}}}$：成员在 `scores` 表中 `S_microbe` 的**算术平均**。
