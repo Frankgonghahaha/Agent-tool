@@ -1,0 +1,11 @@
+target	value	error	units	is_novel	warning
+oxygen	tolerant	0.8682817470148857	probability	False	None
+ph_max	7.531079980484874	1.4229080520680024	pH	False	None
+ph_min	4.902151294969035	0.9008211067989856	pH	False	None
+ph_optimum	6.063824674455443	1.0630225156772357	pH	False	None
+salinity_max	2.3651988593009703	2.4388684152346727	% w/v NaCl	False	None
+salinity_min	0.13206794664424026	1.1747285078906087	% w/v NaCl	False	None
+salinity_optimum	0.5814434173923688	1.8078617460040356	% w/v NaCl	False	None
+temperature_max	36.59546287192891	5.4067385375213695	C	False	None
+temperature_min	19.316830098294044	7.963571846894123	C	False	None
+temperature_optimum	27.968711254671316	5.706095868083505	C	False	None
