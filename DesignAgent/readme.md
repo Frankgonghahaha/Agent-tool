@@ -180,6 +180,27 @@ python Design_pipeline_2.py   --scores ./Result2_candidate_scores.csv   --pairs 
 ```bash
 python Design_pipeline_2.py   --scores ./Result2_candidate_scores.csv   --pairs  ./Result3_pair_Com_index.csv   --topN 30 --kmin 2 --kmax 4 --mode exhaustive --topK 50
 ```
+---
+
+### 📊 输出示例
+- 脚本输出不同组合的得分结果：`Result4_optimal_consortia.csv`
+以下为示例数据（前 5 行）：
+
+| consortium_id | members | size | avg_S_microbe | avg_delta_pos | avg_comp_pos | avg_kcat | S_consort | used_pairs | source_count |
+|----------------|----------|------|----------------|----------------|---------------|------------|-------------|---------------|----------------|
+| C001 | Bacillus subtilis; Pseudomonas putida; Rhodococcus erythropolis | 3 | 0.84 | 0.21 | 0.08 | 35.2 | 0.563 | 3 | {"functional":1,"complement":2} |
+| C002 | Pseudomonas putida; E.coli K12; Acinetobacter baumannii | 3 | 0.78 | 0.19 | 0.10 | 28.7 | 0.524 | 3 | {"functional":1,"complement":2} |
+| C003 | Bacillus subtilis; Acinetobacter baumannii | 2 | 0.81 | 0.23 | 0.05 | 31.5 | 0.518 | 1 | {"functional":1,"complement":1} |
+| C004 | Rhodococcus erythropolis; Pseudomonas putida | 2 | 0.79 | 0.18 | 0.07 | 29.4 | 0.503 | 1 | {"functional":1,"complement":1} |
+| C005 | Bacillus subtilis; E.coli K12; Streptomyces coelicolor | 3 | 0.82 | 0.16 | 0.09 | 33.8 | 0.499 | 3 | {"functional":1,"complement":2} |
+
+> 注：
+> - `avg_S_microbe`：组合内成员平均的单菌打分；
+> - `avg_delta_pos` / `avg_comp_pos`：正向互补性与竞争性平均；
+> - `avg_kcat`：组合成员 `kcat_max` 的平均；
+> - `S_consort`：综合评分结果；
+> - `used_pairs`：该组合在互作矩阵中命中的成对数量；
+> - `source_count`：功能菌/互补菌来源计数（JSON 结构）。
 
 
 
