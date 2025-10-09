@@ -10,7 +10,10 @@
 3) 将 **`Kcat value (1/s)`** 写回 Excel，默认输出为 **`Sheet3_Function_enzyme_kact.xlsx`**。
 
 ---
-
+## 安装
+  ```
+  git clone https://github.com/SysBioChalmers/DLKcat.git
+  ```
 ## ✅ 运行环境
 - Python 3.8+
 - 已安装 PyTorch（脚本会预检），如需 CPU 版：
