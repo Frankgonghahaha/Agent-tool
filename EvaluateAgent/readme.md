@@ -17,7 +17,6 @@
 ## 📦 依赖
 
 - `micom`, `cobra`
--
 - 安装示例：
 ```bash
 pip install micom cobra pandas
