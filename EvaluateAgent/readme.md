@@ -62,19 +62,29 @@ python pipeline1_cli.py \
 
 ---
 
-## 📄 输出
+## 📄 输出文件
+- 输出文件 “已导出推荐培养基：/path/to/Result5_Medium.csv”
+- 输出文件示例：
+以下是生成的 `Result5_Medium_components.csv` 文件的示例（前几行）：
 
-- `--out` 指定路径的 CSV，列：
-  - `reaction`：社区层交换反应（如 `EX_glc__D_m`）；
-  - `flux`：推荐上界（已分档）。
+| reaction | flux |
+|-----------|------|
+| EX_glc__D_m | 10 |
+| EX_o2_m | 20 |
+| EX_pi_m | 1 |
+| EX_nh4_m | 1 |
+| EX_so4_m | 1 |
+| EX_ca2_m | 1 |
+| EX_mg2_m | 1 |
+| EX_zn2_m | 1 |
+| EX_fol_m | 0.1 |
+| EX_chols_m | 0.1 |
+| EX_ppi_m | 0.1 |
+| EX_gthrd_m | 0.1 |
+| EX_tet_m | 0.1 |
+| EX_g3pe_m | 0.1 |
 
----
-
-## 🔎 日志示例
-
-- 每个模型的“非零 `EX_*_m`（全部）”
-- “基于单菌扫描得到的社区培养基建议”预览（前 50 行）
-- “已导出推荐培养基：/path/to/Result5_Medium.csv”
+> 实际结果中可能包含更多反应，上表仅为示例。
 
 
 
