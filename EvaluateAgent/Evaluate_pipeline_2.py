@@ -21,7 +21,7 @@ import argparse
 import tempfile
 import shutil
 import warnings
-from typing import List, Tuple, Optional, Any
+from typing import List, Tuple, Optional, Any, Iterable
 import pandas as pd
 from cobra.io import read_sbml_model, write_sbml_model
 from micom import Community
@@ -59,9 +59,10 @@ MAX_IMPORT = 1000.0  # 社区层 EX 上界
 DBP_EX_ID = "EX_dbp_m"
 
 # 二分与阈值默认参数（不暴露 CLI）
-EPSILON = 0.1      # 最小要求的摄入强度 ε（f ≤ -ε）
+EPSILON = 1     # 最小要求的摄入强度 ε（f ≤ -ε）
 BIS_TOL = 1e-3     # 二分终止阈值
 MAX_ITER = 30      # 二分最大迭代
+MU_TOL = 1e-4      # 目标增长与阈值的接近度容差
 # ---------- 固定反应上下界的辅助上下文管理器 ----------
 from contextlib import contextmanager
 
@@ -172,7 +173,7 @@ def normalize_external_compartment(model):
 
 
 def build_community_from_dir(models_dir: str) -> Tuple[Community, str]:
-    """把目录下所有 SBML 作为成员构建一个社区。返回 (community, tmp_dir)。"""
+    """把目录下所有 SBML 作为成员构建一个社区。返回 (community, tmp_dir, member_names)。"""
     model_paths = discover_models(models_dir)
     if not model_paths:
         raise FileNotFoundError(f"未在目录下发现 SBML：{models_dir}")
@@ -180,8 +181,10 @@ def build_community_from_dir(models_dir: str) -> Tuple[Community, str]:
     tmpd = tempfile.mkdtemp(prefix="community_from_dir_")
     try:
         rows = []
+        member_names: List[str] = []
         for f in model_paths:
             name = os.path.splitext(os.path.basename(f))[0]
+            member_names.append(name)
             model = read_sbml_model(f)
             model = normalize_external_compartment(model)
             # 检测 biomass 反应 ID 并尽量设为该模型目标
@@ -197,7 +200,7 @@ def build_community_from_dir(models_dir: str) -> Tuple[Community, str]:
             rows.append({"id": name, "file": tmp_sbml, "abundance": 1.0, "biomass": biomass_id})
         tax = pd.DataFrame(rows).set_index("id", drop=False)
         com = Community(tax, name="COMM_DBP")
-        return com, tmpd
+        return com, tmpd, member_names
     except Exception:
         shutil.rmtree(tmpd, ignore_errors=True)
         raise
@@ -303,16 +306,110 @@ def step1_max_growth(comm: Community) -> float:
 
 
 
-def step2_max_dbp_uptake(comm: Community, alpha: float, biomass_max: float) -> Tuple[float, float]:
+
+# ---------- 汇总 DBP_HYDRO_BTOH 通量的辅助函数 ----------
+
+def _extract_flux_df(sol: Any) -> Optional[pd.DataFrame]:
+    """尽量从 MICOM 解对象中拿到 fluxes DataFrame。不同版本属性名可能不同。"""
+    if sol is None:
+        return None
+    fx = getattr(sol, "fluxes", None)
+    if isinstance(fx, pd.DataFrame):
+        return fx
+    # 一些版本可能挂在 solution 或 results 下
+    for attr in ("solution", "results"):
+        obj = getattr(sol, attr, None)
+        if obj is not None:
+            fx2 = getattr(obj, "fluxes", None)
+            if isinstance(fx2, pd.DataFrame):
+                return fx2
+    return None
+
+def _sum_flux_pattern(fluxes: Optional[pd.DataFrame], pattern: str) -> float:
+    """在 MICOM fluxes 矩阵中，汇总列名包含 pattern 的通量总和（排除 'medium' 行）。
+    若拿不到 fluxes，返回 0.0。"""
+    if fluxes is None or not isinstance(fluxes, pd.DataFrame) or fluxes.empty:
+        return 0.0
+    cols = [c for c in fluxes.columns if pattern.lower() in str(c).lower()]
+    if not cols:
+        return 0.0
+    rows = [r for r in fluxes.index if str(r) != "medium"]
+    try:
+        sub = fluxes.loc[rows, cols]
+        sub = pd.DataFrame(sub)  # 确保是 DataFrame
+        vals = pd.to_numeric(sub.values.ravel(), errors="coerce")
+        vals = pd.Series(vals).fillna(0.0)
+        return float(vals.sum())
+    except Exception:
+        return 0.0
+
+
+
+# ---- 新增成员生长表辅助 ----
+def _extract_members_df(sol: Any) -> Optional[pd.DataFrame]:
+    for attr in ("members",):
+        df = getattr(sol, attr, None)
+        if isinstance(df, pd.DataFrame):
+            return df.copy()
+    for parent in ("solution", "results"):
+        obj = getattr(sol, parent, None)
+        if obj is not None:
+            df = getattr(obj, "members", None)
+            if isinstance(df, pd.DataFrame):
+                return df.copy()
+    return None
+
+def _members_growth_table(sol: Any) -> Optional[pd.DataFrame]:
+    df = _extract_members_df(sol)
+    if df is None or df.empty:
+        return None
+    # 去掉合成的 'medium' 行（有些 MICOM 版本会在 members 里包含 medium 聚合行）
+    try:
+        mask_idx = ~df.index.astype(str).str.lower().eq("medium")
+    except Exception:
+        mask_idx = pd.Series([True] * len(df), index=df.index)
+    if "id" in df.columns:
+        try:
+            mask_id = ~df["id"].astype(str).str.lower().eq("medium")
+        except Exception:
+            mask_id = True
+        df = df[mask_idx & (mask_id if isinstance(mask_id, pd.Series) else mask_id)]
+    else:
+        df = df[mask_idx]
+    if df.empty:
+        return None
+    # 兼容不同列名，优先使用包含 'growth' 的列
+    growth_col = None
+    for c in df.columns:
+        if "growth" in str(c).lower():
+            growth_col = c
+            break
+    if growth_col is None:
+        return None
+    out = pd.DataFrame({
+        "member": df.index.astype(str) if df.index.name else df.get("id", df.index).astype(str),
+        "growth_rate": pd.to_numeric(df[growth_col], errors="coerce")
+    })
+    out = out.fillna(0.0)
+    # 终极清洗：去掉 member 为 'medium' 的行（忽略大小写与首尾空白）
+    try:
+        out = out[~out["member"].astype(str).str.strip().str.lower().eq("medium")]
+    except Exception:
+        pass
+    return out
+
+def step2_max_dbp_uptake(comm: Community, alpha: float, biomass_max: float) -> Tuple[float, float, Optional[pd.DataFrame]]:
     """
-    二阶段（循环参数模拟风格）：
-      - 目标：在 μ_comm ≥ α·μ* 的前提下，强制 f ≤ -ε，并最小化 EX_dbp_m（越负越好）
-      - 实现：对 f 做二分查找。每一步将 EX_dbp_m 固定为 f，调用 CT(f=1.0) 求最大增长，判定是否 ≥ α·μ*。
-    返回 (growth_at_f*, f_star)。
+    二阶段（改进版）：
+      - 目标：使增长 μ*(f) 尽量贴近阈值 target=α·μ*（且 μ*(f)≥target），同时 f 尽可能负（最大化 DBP 摄入）。
+      - 实现：对 f 做二分，每次固定 EX_dbp_m=f 计算 μ*(f)；
+        * 若 μ*(f) ≥ target，则记录为候选并收缩右端（逼近最负仍可行的边界→使 μ*(f) 向 target 贴近）；
+        * 若 μ*(f) < target，则提升左端（减少负载）。
+      - 返回： (growth_at_f*, f_star, members_growth_df)
     """
     if DBP_EX_ID not in comm.reactions:
         print(f"[警告] 社区中不存在 {DBP_EX_ID}，无法度量 DBP 摄入。")
-        return float("nan"), float("nan")
+        return float("nan"), float("nan"), None
 
     # 先算不加增长约束时的最小摄入 f_min
     f_min = unconstrained_min_ex(comm, DBP_EX_ID)
@@ -326,61 +423,147 @@ def step2_max_dbp_uptake(comm: Community, alpha: float, biomass_max: float) -> T
     mu_hi = ct_max_growth_under_ex(comm, DBP_EX_ID, f_hi)
     print(f"[可行性判定] f_hi={f_hi:.6f} → μ*(f_hi)={mu_hi:.6f}")
 
+    # 情况 A：右端点不可行 → 在 [0, f_hi] 内找“最轻负载”的可行负 f
     if mu_hi < target - 1e-12:
-        # 连 -ε 都不可行，则在 [0, -ε] 里找最小可行的负值
         left, right = 0.0, f_hi
         mu_left = ct_max_growth_under_ex(comm, DBP_EX_ID, left)
         print(f"[右端点不可行] 尝试在 [0, {f_hi:.6f}] 内二分；μ*(0)={mu_left:.6f}")
         if mu_left < target - 1e-12:
             print("[失败] 连 f=0 都不满足增长约束，无法给出负摄入。")
-            return mu_left, 0.0
-        best = left
+            # 返回 f=0 处解
+            with fixed_bound(comm, DBP_EX_ID, 0.0):
+                sol = comm.cooperative_tradeoff(fraction=1.0, fluxes=True)
+                g = float(getattr(sol, "growth_rate", getattr(sol, "objective_value", 0.0)) or 0.0)
+                mg = _members_growth_table(sol)
+                return g, 0.0, mg
+        best_f, best_mu = left, mu_left
         for _ in range(MAX_ITER):
             mid = 0.5 * (left + right)
             mu_mid = ct_max_growth_under_ex(comm, DBP_EX_ID, mid)
             if mu_mid >= target:
-                best = mid
+                best_f, best_mu = mid, mu_mid
                 right = mid
             else:
                 left = mid
-            if abs(right - left) <= BIS_TOL:
+            if abs(right - left) <= BIS_TOL or abs(mu_mid - target) <= MU_TOL:
                 break
-        return ct_max_growth_under_ex(comm, DBP_EX_ID, best), best
+        with fixed_bound(comm, DBP_EX_ID, best_f):
+            sol = comm.cooperative_tradeoff(fraction=1.0, fluxes=True)
+            g = float(getattr(sol, "growth_rate", getattr(sol, "objective_value", 0.0)) or 0.0)
+            mg = _members_growth_table(sol)
+            return g, best_f, mg
 
-    # 右端点可行：在 [f_min, f_hi] 内找“最负且可行”的 f
-    # 注意 f_min 可能比 f_hi 更负（更小）；确保区间有序：f_left ≤ f_right
+    # 情况 B：右端点可行 → 在 [f_min, f_hi] 搜索“最负仍可行”，并尽量贴近 target
     f_left = min(f_min, f_hi)
     f_right = max(f_min, f_hi)
-    # 保证 f_left ≤ f_right 且 f_right=f_hi（可行），若 f_left 不可行则向右收缩
     mu_left = ct_max_growth_under_ex(comm, DBP_EX_ID, f_left)
     print(f"[初始化区间] f_left={f_left:.6f} → μ*(f_left)={mu_left:.6f}")
+
     if mu_left < target - 1e-12:
-        # 向右收缩直到可行
         left, right = f_left, f_hi
-        best = right
+        best_f, best_mu = f_hi, mu_hi
         for _ in range(MAX_ITER):
             mid = 0.5 * (left + right)
             mu_mid = ct_max_growth_under_ex(comm, DBP_EX_ID, mid)
             if mu_mid >= target:
-                best = mid
-                left = mid  # 注意这里向更负的一侧推进需小心，但由于 mid 介于左负更大与右较少负之间，这样递推可收敛
+                best_f, best_mu = mid, mu_mid
+                right = mid  # 可行→收缩右端，逼近阈值
             else:
-                right = mid
-            if abs(right - left) <= BIS_TOL:
+                left = mid
+            if abs(right - left) <= BIS_TOL or abs(mu_mid - target) <= MU_TOL:
                 break
-        return ct_max_growth_under_ex(comm, DBP_EX_ID, best), best
+        with fixed_bound(comm, DBP_EX_ID, best_f):
+            sol = comm.cooperative_tradeoff(fraction=1.0, fluxes=True)
+            g = float(getattr(sol, "growth_rate", getattr(sol, "objective_value", 0.0)) or 0.0)
+            mg = _members_growth_table(sol)
+            return g, best_f, mg
 
-    # 若 f_left 本身也可行，说明整个区间都可行，则取最负的 f_left
-    return ct_max_growth_under_ex(comm, DBP_EX_ID, f_left), f_left
+    # 若 f_left 本身也可行，整个区间都可行 → 取最负 f_left
+    with fixed_bound(comm, DBP_EX_ID, f_left):
+        sol = comm.cooperative_tradeoff(fraction=1.0, fluxes=True)
+        g = float(getattr(sol, "growth_rate", getattr(sol, "objective_value", 0.0)) or 0.0)
+        mg = _members_growth_table(sol)
+        return g, f_left, mg
 
 
 # ---------- 主程序 ----------
+# ---------- α扫描相关辅助 ----------
+def _parse_alphas(s: Optional[str]) -> List[float]:
+    if not s:
+        return [0.5, 0.6, 0.7, 0.8, 0.9]
+    vals: List[float] = []
+    for tok in s.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            v = float(tok)
+            if v <= 0 or v > 1.0:
+                continue
+            vals.append(v)
+        except Exception:
+            continue
+    return sorted(set(vals)) or [0.5, 0.6, 0.7, 0.8, 0.9]
+
+
+def run_alpha_scan(comm: Community, biomass_max: float, alphas: Iterable[float]) -> pd.DataFrame:
+    rows = []
+    for a in alphas:
+        g, f, _ = step2_max_dbp_uptake(comm, float(a), biomass_max)
+        rows.append({
+            "alpha": float(a),
+            "biomass_max": biomass_max,
+            "growth_at_f": g,
+            "dbp_flux_f": f
+        })
+        print(f"  [α-scan] alpha={a:.3f} → growth(f)={g:.6f}, f*(EX_dbp_m)={f:.6f}")
+    return pd.DataFrame(rows)
+
+# ---------- 群落成员名称提取辅助 ----------
+def _community_member_names(comm: Community) -> List[str]:
+    """尽量稳健地拿到群落成员名称：优先 'id' 列；其次 index；再退而求其次用 'file' 列的基名去掉扩展名。"""
+    try:
+        taxa = comm.taxa
+        if isinstance(taxa, pd.DataFrame) and not taxa.empty:
+            # 1) 优先用 'id' 列
+            if 'id' in taxa.columns:
+                vals = [str(x).strip() for x in taxa['id'].tolist()]
+                vals = [v for v in vals if v]
+                if vals:
+                    return vals
+            # 2) 再用 index
+            try:
+                idx_vals = [str(x).strip() for x in taxa.index.tolist()]
+                idx_vals = [v for v in idx_vals if v]
+                # 排除纯数字索引的情况（如 0,1,2...）
+                if idx_vals and not all(v.isdigit() for v in idx_vals):
+                    return idx_vals
+            except Exception:
+                pass
+            # 3) 最后用 'file' 列推断
+            if 'file' in taxa.columns:
+                base = []
+                for p in taxa['file'].tolist():
+                    try:
+                        b = os.path.splitext(os.path.basename(str(p)))[0]
+                        if b:
+                            base.append(b)
+                    except Exception:
+                        continue
+                if base:
+                    return base
+    except Exception:
+        pass
+    return []
+
 def main():
     parser = argparse.ArgumentParser(description="Pipeline 2：推荐培养基 + 两步优化（最大生长 → 在α下最大化 DBP 摄入）")
     parser.add_argument("--model-dir", required=True, help="代谢模型目录（递归搜索 .xml/.sbml）")
     parser.add_argument("--medium-csv", required=True, help="培养基 CSV（两列：reaction, flux 或 suggested_upper_bound）")
     parser.add_argument("--alpha", type=float, default=0.7, help="第二步生长下界系数 alpha（默认 0.7）")
     parser.add_argument("--out", help="导出结果 CSV 路径（默认写入 model-dir/Result6_community.csv）")
+    parser.add_argument("--alpha-scan", action="store_true", help="启用 α 扫描（默认扫描 0.5,0.6,0.7,0.8,0.9）")
+    parser.add_argument("--alphas", type=str, help="自定义 α 列表，逗号分隔，如: 0.5,0.6,0.7")
     args = parser.parse_args()
 
     print("参数：")
@@ -395,7 +578,7 @@ def main():
     print(medium.to_string(index=False))
 
     # 构建社区
-    com, tmpd = build_community_from_dir(args.model_dir)
+    com, tmpd, member_names = build_community_from_dir(args.model_dir)
     try:
         provided_biomass = sum(1 for x in getattr(com.taxa, 'biomass', []) if x)
     except Exception:
@@ -413,26 +596,78 @@ def main():
         biomass_max = step1_max_growth(com)
         print(f"\n阶段一：最大群落生长 Biomass_max = {biomass_max:.6f}")
 
+        # 可选：α 扫描
+        if biomass_max > 1e-12 and args.alpha_scan:
+            scan_list = _parse_alphas(args.alphas)
+            print("\n[α 扫描] 将在以下 α 上运行二阶段：", ", ".join(f"{x:.2f}" for x in scan_list))
+            df_scan = run_alpha_scan(com, biomass_max, scan_list)
+            scan_out = os.path.join(os.path.abspath(args.model_dir), "Result6_community_alpha_scan.csv")
+            df_scan.to_csv(scan_out, index=False)
+            print("[α 扫描] 已导出：", scan_out)
+
         # 第二步：在 alpha*Biomass_max 下最小化 EX_dbp_m
         if biomass_max <= 1e-12:
             print("\n[警告] Biomass_max 为 0，跳过阶段二优化。")
-            stage2_growth, dbp_flux = float("nan"), float("nan")
+            stage2_growth, dbp_flux, stage2_members_df = float("nan"), float("nan"), None
         else:
-            stage2_growth, dbp_flux = step2_max_dbp_uptake(com, args.alpha, biomass_max)
+            stage2_growth, dbp_flux, stage2_members_df = step2_max_dbp_uptake(com, args.alpha, biomass_max)
+            # 钳制输出，防止数值抖动导致增长率看似超过最大值
+            biomass_stage2 = min(stage2_growth, biomass_max + 1e-6)
+            # 钳制输出，防止数值抖动导致增长率看似超过最大值
+            growth_report = biomass_stage2
             print(f"\n阶段二：growth ≥ {args.alpha:.2f} * {biomass_max:.6f} = {args.alpha*biomass_max:.6f}")
-            print(f"  解得 growth(f*) = {stage2_growth:.6f}")
+            print(f"  解得 growth(f*) = {growth_report:.6f}")
             print(f"  f* (EX_dbp_m 固定通量) = {dbp_flux:.6f}  （负值=摄入，越负代表摄入越强）")
 
-        # 结果输出路径：若未显式提供 --out，则默认写入 model-dir/Result6_community.csv
-        default_out = os.path.join(os.path.abspath(args.model_dir), "Result6_community.csv")
-        out_path = os.path.abspath(args.out) if args.out else default_out
-        pd.DataFrame([{
+        # 结果输出路径：写入 Excel，多 sheet
+        default_out_xlsx = os.path.join(os.path.abspath(args.model_dir), "Result6_community.xlsx")
+        out_path = os.path.abspath(args.out) if args.out else default_out_xlsx
+        if not out_path.lower().endswith(".xlsx"):
+            root, _ext = os.path.splitext(out_path)
+            out_path = root + ".xlsx"
+
+        # 优先从 MICOM 的 taxa 表中读取 id 作为群落组成；若失败再回退到文件名列表
+        try:
+            ids = com.taxa["id"].astype(str).tolist()
+        except Exception:
+            try:
+                ids = [str(x) for x in com.taxa.index.tolist()]
+            except Exception:
+                ids = list(member_names)
+        community_str = ",".join(ids)
+
+        # 若阶段二未运行，Biomass 使用 nan
+        try:
+            biomass_stage2
+        except NameError:
+            biomass_stage2 = float('nan')
+
+        summary_df = pd.DataFrame([{
             "model_count": len(com.taxa),
-            "biomass_max": biomass_max,
-            "alpha": args.alpha,
-            "dbp_flux_stage2": dbp_flux,
-            "notes": ""
-        }]).to_csv(out_path, index=False)
+            "Communitity": community_str,
+            "Biomass": biomass_stage2,
+            "DBP flux": dbp_flux,
+        }])
+
+        # 第二张表：成员生长（若可用）
+        mg_df = None
+        try:
+            mg_df = stage2_members_df if isinstance(stage2_members_df, pd.DataFrame) else None
+        except NameError:
+            mg_df = None
+
+        with pd.ExcelWriter(out_path) as writer:
+            summary_df.to_excel(writer, index=False, sheet_name="Simulate result")
+            if mg_df is not None and not mg_df.empty:
+                try:
+                    mg_df = mg_df[~mg_df["member"].astype(str).str.strip().str.lower().eq("medium")]
+                except Exception:
+                    pass
+                mg_df.to_excel(writer, index=False, sheet_name="Microbial growth")
+            else:
+                # 若没有成员表，写一个空结构占位
+                pd.DataFrame(columns=["member", "growth_rate"]).to_excel(writer, index=False, sheet_name="Microbial growth")
+
         print("\n✅ 已导出结果：", out_path)
 
     finally:
