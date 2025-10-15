@@ -1,6 +1,6 @@
 
-# Evalaute_pipeline_1  
-该代码主要是确定 **pipeline 2** 群落模拟的培养基成分及设置通量上限值。
+# Evalaute_pipeline_2  
+该代码主要是确定 **pipeline 3** 群落模拟的培养基成分及设置通量上限值。
 
 ---
 
@@ -29,7 +29,7 @@ pip install micom cobra pandas
 ## 🚀 使用
 
 ```bash
-python pipeline1_cli.py \
+python Evalaute_pipeline_2.py \
   --model-dir "/path/to/models" \
   --out "/path/to/Result5_Medium.csv" \
   --community-growth 0.1 \
