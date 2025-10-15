@@ -172,8 +172,8 @@ def normalize_external_compartment(model):
     return model
 
 
-def build_community_from_dir(models_dir: str) -> Tuple[Community, str]:
-    """把目录下所有 SBML 作为成员构建一个社区。返回 (community, tmp_dir, member_names)。"""
+def build_community_from_dir(models_dir: str) -> Tuple[Community, str, pd.DataFrame, List[str]]:
+    """把目录下所有 SBML 作为成员构建一个社区。返回 (community, tmp_dir, taxa DataFrame, member_names)。"""
     model_paths = discover_models(models_dir)
     if not model_paths:
         raise FileNotFoundError(f"未在目录下发现 SBML：{models_dir}")
@@ -200,7 +200,7 @@ def build_community_from_dir(models_dir: str) -> Tuple[Community, str]:
             rows.append({"id": name, "file": tmp_sbml, "abundance": 1.0, "biomass": biomass_id})
         tax = pd.DataFrame(rows).set_index("id", drop=False)
         com = Community(tax, name="COMM_DBP")
-        return com, tmpd, member_names
+        return com, tmpd, tax, member_names
     except Exception:
         shutil.rmtree(tmpd, ignore_errors=True)
         raise
@@ -564,6 +564,7 @@ def main():
     parser.add_argument("--out", help="导出结果 CSV 路径（默认写入 model-dir/Result6_community.csv）")
     parser.add_argument("--alpha-scan", action="store_true", help="启用 α 扫描（默认扫描 0.5,0.6,0.7,0.8,0.9）")
     parser.add_argument("--alphas", type=str, help="自定义 α 列表，逗号分隔，如: 0.5,0.6,0.7")
+    parser.add_argument("--Robust", action="store_true", help="启用稳健性分析：顺序去除每个物种并重新优化")
     args = parser.parse_args()
 
     print("参数：")
@@ -578,7 +579,7 @@ def main():
     print(medium.to_string(index=False))
 
     # 构建社区
-    com, tmpd, member_names = build_community_from_dir(args.model_dir)
+    com, tmpd, tax_base, member_names = build_community_from_dir(args.model_dir)
     try:
         provided_biomass = sum(1 for x in getattr(com.taxa, 'biomass', []) if x)
     except Exception:
@@ -656,6 +657,54 @@ def main():
         except NameError:
             mg_df = None
 
+        # ---------- Robustness analysis (rebuild from tax_base each time) ----------
+        robust_results = []
+        if args.Robust:
+            print("\n[Robustness] 启用顺序去除每个物种并重新优化：")
+            if not isinstance(tax_base, pd.DataFrame) or tax_base.empty or "id" not in tax_base.columns:
+                print("[错误] 无法执行 Robust：tax_base 不是有效的 DataFrame 或缺少 'id' 列。")
+            else:
+                taxa_ids = tax_base["id"].astype(str).tolist()
+                for remove_id in taxa_ids:
+                    print(f"\n[Robustness] 移除物种: {remove_id}")
+                    # 从原始 taxa 基础表移除该成员，确保始终是 DataFrame
+                    taxa_new = tax_base[tax_base["id"].astype(str) != str(remove_id)].copy()
+                    if taxa_new.empty:
+                        print("  [Robustness] 移除后社区为空，跳过。")
+                        robust_results.append({
+                            "Removal species": remove_id,
+                            "DBP flux": float("nan"),
+                            "Biomass": float("nan")
+                        })
+                        continue
+                    try:
+                        com_new = Community(taxa_new, name="COMM_DBP_Robust")
+                        apply_medium_via_micom(com_new, medium)
+                        biomass_max_rb = step1_max_growth(com_new)
+                        if biomass_max_rb <= 1e-12:
+                            robust_results.append({
+                                "Removal species": remove_id,
+                                "DBP flux": float("nan"),
+                                "Biomass": float("nan")
+                            })
+                            print("  [Robustness] Biomass_max=0, 跳过阶段二。")
+                            continue
+                        stage2_growth_rb, dbp_flux_rb, _ = step2_max_dbp_uptake(com_new, args.alpha, biomass_max_rb)
+                        biomass_stage2_rb = min(stage2_growth_rb, biomass_max_rb + 1e-6)
+                        robust_results.append({
+                            "Removal species": remove_id,
+                            "DBP flux": dbp_flux_rb,
+                            "Biomass": biomass_stage2_rb
+                        })
+                        print(f"  [Robustness] Biomass={biomass_stage2_rb:.6f}, DBP flux={dbp_flux_rb:.6f}")
+                    except Exception as e:
+                        robust_results.append({
+                            "Removal species": remove_id,
+                            "DBP flux": float("nan"),
+                            "Biomass": float("nan")
+                        })
+                        print(f"  [Robustness] 发生错误: {e}")
+
         with pd.ExcelWriter(out_path) as writer:
             summary_df.to_excel(writer, index=False, sheet_name="Simulate result")
             if mg_df is not None and not mg_df.empty:
@@ -667,6 +716,10 @@ def main():
             else:
                 # 若没有成员表，写一个空结构占位
                 pd.DataFrame(columns=["member", "growth_rate"]).to_excel(writer, index=False, sheet_name="Microbial growth")
+            # 写入 Robust sheet
+            if args.Robust:
+                robust_df = pd.DataFrame(robust_results, columns=["Removal species", "DBP flux", "Biomass"])
+                robust_df.to_excel(writer, index=False, sheet_name="Robust")
 
         print("\n✅ 已导出结果：", out_path)
 
